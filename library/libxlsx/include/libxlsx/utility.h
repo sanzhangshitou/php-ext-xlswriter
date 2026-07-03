@@ -312,6 +312,11 @@ int lxlsx_sprintf_dbl(char *data, double number);
         lxlsx_snprintf(data, LXLSX_ATTR_32, "%.16G", number)
 #endif
 
+/* Locale-independent strtod: OOXML decimals always use '.', regardless of the
+ * host LC_NUMERIC. Use this instead of strtod() when parsing values read from
+ * the xlsx XML. */
+double lxlsx_strtod(const char *str, char **endptr);
+
 uint16_t lxlsx_hash_password(const char *password);
 
 /* *INDENT-OFF* */

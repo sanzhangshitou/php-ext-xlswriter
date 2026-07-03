@@ -384,15 +384,18 @@ static int lxlsx_reader_cell_bridge(const lxlsx_cell *c, void *callback_data)
 
     if (Z_TYPE_P(_cd->zv_type_t) != IS_ARRAY && _cd->data_type_default == READ_TYPE_EMPTY) {
         zend_long _long = 0; double _double = 0;
-        if (is_numeric_string(str, str_len, &_long, &_double, 0)) {
-            /* Both branches expand to macros that PHP 7.4 defines as bare
-             * `{ ... }` blocks; without explicit braces the trailing `;`
-             * orphans the else. Same shape as the fix in kernel/excel.c. */
-            if (_double > 0) {
-                ZVAL_DOUBLE(&args[2], _double);
-            } else {
-                ZVAL_LONG(&args[2], _long);
-            }
+        int kind = is_numeric_string(str, str_len, &_long, &_double, 0);
+        /* Dispatch on the kind reported by is_numeric_string, not on the
+         * sign of _double: a negative or zero double (e.g. "-5.5") sets
+         * _double only and leaves _long at 0, so a `_double > 0` test would
+         * emit ZVAL_LONG(0) and corrupt the value. Same shape as the fix in
+         * kernel/excel.c. Braces are mandatory: on PHP 7.4 some Z_VAL_*
+         * macros expand to a bare `{ ... }` block, so chaining
+         * `if (...) MACRO; else if (...) MACRO;` orphans the else. */
+        if (kind == IS_LONG) {
+            ZVAL_LONG(&args[2], _long);
+        } else if (kind == IS_DOUBLE) {
+            ZVAL_DOUBLE(&args[2], _double);
         } else {
             ZVAL_STRINGL(&args[2], str, str_len);
         }

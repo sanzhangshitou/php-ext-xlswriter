@@ -654,7 +654,7 @@ static int looks_numeric(const char *str)
     char *end = NULL;
     if (!str || !*str)
         return 0;
-    (void)strtod(str, &end);
+    (void)lxlsx_strtod(str, &end);
     return end && *end == 0;
 }
 
@@ -697,7 +697,7 @@ static lxlsx_error append_cell_xml(lxlsx_edit_buf *buf,
         return LXLSX_ERROR_MEMORY_MALLOC_FAILED;
 
     if (change->type == LXLSX_EDIT_CHANGE_NUMBER) {
-        snprintf(number, sizeof(number), "%.17g", change->number);
+        lxlsx_sprintf_dbl(number, change->number);  /* locale-independent */
         if (buf_append_s(buf, "<v>") != 0 ||
             buf_append_s(buf, number) != 0 ||
             buf_append_s(buf, "</v>") != 0)
@@ -2276,7 +2276,11 @@ static lxlsx_error patch_xml_with_row_dims(unsigned char **xml, size_t *xml_len,
             if (buf_append(&out, ap, 1) != 0) { err = LXLSX_ERROR_MEMORY_MALLOC_FAILED; goto done; }
             ap++;
         }
-        snprintf(attr, sizeof(attr), " ht=\"%g\" customHeight=\"1\"", height);
+        {
+            char htbuf[LXLSX_ATTR_32];
+            lxlsx_sprintf_dbl(htbuf, height);  /* locale-independent */
+            snprintf(attr, sizeof(attr), " ht=\"%s\" customHeight=\"1\"", htbuf);
+        }
         if (buf_append_s(&out, attr) != 0 ||
             buf_append_s(&out, self_closing ? "/>" : ">") != 0) { err = LXLSX_ERROR_MEMORY_MALLOC_FAILED; goto done; }
         p = gt + 1;
@@ -2454,7 +2458,11 @@ static int emit_font_fragment(lxlsx_edit_buf *b, const lxlsx_format *f)
         if (buf_append_s(b, f->underline == 2 ? "<u val=\"double\"/>" : "<u/>") != 0)
             return -1;
     }
-    snprintf(tmp, sizeof(tmp), "<sz val=\"%g\"/>", f->font_size > 0 ? f->font_size : 11.0);
+    {
+        char szbuf[LXLSX_ATTR_32];
+        lxlsx_sprintf_dbl(szbuf, f->font_size > 0 ? f->font_size : 11.0);
+        snprintf(tmp, sizeof(tmp), "<sz val=\"%s\"/>", szbuf);
+    }
     if (buf_append_s(b, tmp) != 0) return -1;
     if (f->font_color != LXLSX_COLOR_UNSET) {
         snprintf(tmp, sizeof(tmp), "<color rgb=\"FF%06X\"/>",

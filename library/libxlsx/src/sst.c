@@ -4,6 +4,7 @@
 #include "sst.h"
 #include "xlsx_util.h"
 #include "xml_pump.h"
+#include "libxlsx/utility.h"
 
 /* Per-SI run accumulator — populated while scanning <r>...</r>. */
 typedef struct {
@@ -222,7 +223,7 @@ static void on_start(void *ud, const char *name, const char **attrs)
                     }
                 }
             } else if (lxlsx_reader_xml_name_eq(name, "sz")) {
-                if ((v = lxlsx_reader_xml_attr(attrs, "val"))) s->pending.font_size = strtod(v, NULL);
+                if ((v = lxlsx_reader_xml_attr(attrs, "val"))) s->pending.font_size = lxlsx_strtod(v, NULL);
             } else if (lxlsx_reader_xml_name_eq(name, "b")) {
                 v = lxlsx_reader_xml_attr(attrs, "val");
                 s->pending.bold = !v || strcmp(v, "0") != 0;

@@ -8437,7 +8437,7 @@ lxlsx_worksheet_write_formula_num(lxlsx_worksheet *self,
         if (err)
             return err;
 
-        snprintf(result_buf, sizeof(result_buf), "%.15g", result);
+        lxlsx_sprintf_dbl(result_buf, result);  /* locale-independent */
         err = lxlsx_edit_set_formula(self->edit_session, self->edit_sheet_name,
                                      row_num, col_num, formula, result_buf);
         if (err)
@@ -12491,7 +12491,7 @@ static void emit_cell(lxlsx_reader_worksheet *ws, lxlsx_cell *out)
         if (xf && (xf->category == LXLSX_READER_FMT_CATEGORY_DATE ||
                    xf->category == LXLSX_READER_FMT_CATEGORY_TIME ||
                    xf->category == LXLSX_READER_FMT_CATEGORY_DATETIME)) {
-            double serial = ws->cell_value ? strtod(ws->cell_value, NULL) : 0.0;
+            double serial = ws->cell_value ? lxlsx_strtod(ws->cell_value, NULL) : 0.0;
             out->type = DATETIME_CELL;
             out->data.reader.value.unix_timestamp =
                 lxlsx_reader_excel_serial_to_unix(serial,
@@ -12499,7 +12499,7 @@ static void emit_cell(lxlsx_reader_worksheet *ws, lxlsx_cell *out)
         } else {
             out->type = NUMBER_CELL;
             out->data.reader.value.number =
-                ws->cell_value ? strtod(ws->cell_value, NULL) : 0.0;
+                ws->cell_value ? lxlsx_strtod(ws->cell_value, NULL) : 0.0;
         }
         return;
     }
@@ -12858,7 +12858,7 @@ static void on_start(void *ud, const char *name, const char **attrs)
                     }
                 }
             } else if (lxlsx_reader_xml_name_eq(name, "sz")) {
-                if ((v = lxlsx_reader_xml_attr(attrs, "val"))) ws->inline_pending_font_size = strtod(v, NULL);
+                if ((v = lxlsx_reader_xml_attr(attrs, "val"))) ws->inline_pending_font_size = lxlsx_strtod(v, NULL);
             } else if (lxlsx_reader_xml_name_eq(name, "b")) {
                 v = lxlsx_reader_xml_attr(attrs, "val");
                 ws->inline_pending_bold = !v || strcmp(v, "0") != 0;
@@ -13564,11 +13564,11 @@ static void m_on_start(void *ud, const char *name, const char **attrs)
             const char *dcw = lxlsx_reader_xml_attr(attrs, "defaultColWidth");
             if (drh) {
                 c->m->has_default_row_height = 1;
-                c->m->default_row_height = strtod(drh, NULL);
+                c->m->default_row_height = lxlsx_strtod(drh, NULL);
             }
             if (dcw) {
                 c->m->has_default_col_width = 1;
-                c->m->default_col_width = strtod(dcw, NULL);
+                c->m->default_col_width = lxlsx_strtod(dcw, NULL);
             }
             /* element is empty / self-closing in practice — stay in WORKSHEET */
         } else if (lxlsx_reader_xml_name_eq(name, "cols")) {
@@ -13595,12 +13595,12 @@ static void m_on_start(void *ud, const char *name, const char **attrs)
             const char *h = lxlsx_reader_xml_attr(attrs, "header");
             const char *f = lxlsx_reader_xml_attr(attrs, "footer");
             c->m->page_has_margins = 1;
-            if (l) c->m->page_margin_left   = strtod(l, NULL);
-            if (r) c->m->page_margin_right  = strtod(r, NULL);
-            if (t) c->m->page_margin_top    = strtod(t, NULL);
-            if (b) c->m->page_margin_bottom = strtod(b, NULL);
-            if (h) c->m->page_margin_header = strtod(h, NULL);
-            if (f) c->m->page_margin_footer = strtod(f, NULL);
+            if (l) c->m->page_margin_left   = lxlsx_strtod(l, NULL);
+            if (r) c->m->page_margin_right  = lxlsx_strtod(r, NULL);
+            if (t) c->m->page_margin_top    = lxlsx_strtod(t, NULL);
+            if (b) c->m->page_margin_bottom = lxlsx_strtod(b, NULL);
+            if (h) c->m->page_margin_header = lxlsx_strtod(h, NULL);
+            if (f) c->m->page_margin_footer = lxlsx_strtod(f, NULL);
         } else if (lxlsx_reader_xml_name_eq(name, "pageSetup")) {
             const char *v;
             c->m->page_has_setup = 1;
@@ -13683,7 +13683,7 @@ static void m_on_start(void *ud, const char *name, const char **attrs)
                 col->min = vmin ? (size_t)strtoul(vmin, NULL, 10) : 0;
                 col->max = vmax ? (size_t)strtoul(vmax, NULL, 10) : col->min;
                 if (vw) {
-                    col->width = strtod(vw, NULL);
+                    col->width = lxlsx_strtod(vw, NULL);
                     /* OOXML lists customWidth=1 when an explicit width was set;
                      * absent customWidth on a width attr is the default-derived
                      * value the writer emits. Treat any present width as
@@ -13776,7 +13776,7 @@ static void m_on_start(void *ud, const char *name, const char **attrs)
                 fc->kind      = LXLSX_READER_FILTER_TOP10;
                 fc->top       = top_attr ? attr_truthy(top_attr) : 1;
                 fc->percent   = attr_truthy(pct_attr);
-                fc->top_value = val_attr ? strtod(val_attr, NULL) : 0;
+                fc->top_value = val_attr ? lxlsx_strtod(val_attr, NULL) : 0;
                 enter_skip(c, name);
             } else if (lxlsx_reader_xml_name_eq(name, "dynamicFilter")) {
                 fc->kind = LXLSX_READER_FILTER_DYNAMIC;
@@ -13804,7 +13804,7 @@ static void m_on_start(void *ud, const char *name, const char **attrs)
                 if ((v = lxlsx_reader_xml_attr(attrs, "operator")))    r->operator_   = strdup(v);
                 if ((v = lxlsx_reader_xml_attr(attrs, "priority")))    r->priority    = (int)strtol(v, NULL, 10);
                 if ((v = lxlsx_reader_xml_attr(attrs, "dxfId")))       r->dxf_id      = (int)strtol(v, NULL, 10);
-                if ((v = lxlsx_reader_xml_attr(attrs, "rank")))        r->rank        = strtod(v, NULL);
+                if ((v = lxlsx_reader_xml_attr(attrs, "rank")))        r->rank        = lxlsx_strtod(v, NULL);
                 if ((v = lxlsx_reader_xml_attr(attrs, "text")))        r->text        = strdup(v);
                 if ((v = lxlsx_reader_xml_attr(attrs, "timePeriod")))  r->time_period = strdup(v);
                 r->stop_if_true = attr_truthy(lxlsx_reader_xml_attr(attrs, "stopIfTrue"));
@@ -13908,7 +13908,7 @@ static void m_on_start(void *ud, const char *name, const char **attrs)
                 if (rm) {
                     if (ht) {
                         rm->has_height = 1;
-                        rm->height = strtod(ht, NULL);
+                        rm->height = lxlsx_strtod(ht, NULL);
                     }
                     rm->hidden        = attr_truthy(hidden);
                     rm->outline_level = ol ? (int)strtol(ol, NULL, 10) : 0;
