@@ -78,21 +78,24 @@ struct lxlsx_xml_attribute *lxlsx_new_attribute_dbl(const char *key, double valu
 #define LXLSX_PUSH_ATTRIBUTES_STR(key, value)                   \
     do {                                                      \
     attribute = lxlsx_new_attribute_str((key), (value));        \
-    STAILQ_INSERT_TAIL(&attributes, attribute, list_entries); \
+    if (attribute)                                            \
+        STAILQ_INSERT_TAIL(&attributes, attribute, list_entries); \
     } while (0)
 
 /* Macro to add attribute int values to lxlsx_xml_attribute_list. */
 #define LXLSX_PUSH_ATTRIBUTES_INT(key, value)                   \
     do {                                                      \
     attribute = lxlsx_new_attribute_int((key), (value));        \
-    STAILQ_INSERT_TAIL(&attributes, attribute, list_entries); \
+    if (attribute)                                            \
+        STAILQ_INSERT_TAIL(&attributes, attribute, list_entries); \
     } while (0)
 
 /* Macro to add attribute double values to lxlsx_xml_attribute_list. */
 #define LXLSX_PUSH_ATTRIBUTES_DBL(key, value)                   \
     do {                                                      \
     attribute = lxlsx_new_attribute_dbl((key), (value));        \
-    STAILQ_INSERT_TAIL(&attributes, attribute, list_entries); \
+    if (attribute)                                            \
+        STAILQ_INSERT_TAIL(&attributes, attribute, list_entries); \
     } while (0)
 
 /* Macro to free lxlsx_xml_attribute_list and attribute. */

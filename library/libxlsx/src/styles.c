@@ -2001,7 +2001,7 @@ static void extract_color(const lxlsx_reader_styles *st,
 
     tint = lxlsx_reader_xml_attr(attrs, "tint");
     if (have_color && tint) {
-        apply_tint(out, strtod(tint, NULL));
+        apply_tint(out, lxlsx_strtod(tint, NULL));
     }
 }
 
@@ -2132,7 +2132,7 @@ static void parse_font_child(const lxlsx_reader_styles *st,
     if (!f) return;
     if (lxlsx_reader_xml_name_eq(name, "sz")) {
         const char *v = lxlsx_reader_xml_attr(attrs, "val");
-        if (v) f->size = strtod(v, NULL);
+        if (v) f->size = lxlsx_strtod(v, NULL);
     } else if (lxlsx_reader_xml_name_eq(name, "name") || lxlsx_reader_xml_name_eq(name, "rFont")) {
         const char *v = lxlsx_reader_xml_attr(attrs, "val");
         if (v) { free((void *)f->name); f->name = strdup(v); }

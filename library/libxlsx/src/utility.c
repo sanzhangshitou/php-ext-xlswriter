@@ -13,6 +13,7 @@
 #endif
 
 #include <ctype.h>
+#include <locale.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
@@ -758,6 +759,56 @@ lxlsx_sprintf_dbl(char *data, double number)
     return 0;
 }
 #endif
+
+/*
+ * Locale-independent strtod. OOXML always stores decimals with '.', but
+ * strtod() honours LC_NUMERIC, so if the host (e.g. a PHP script that called
+ * setlocale(LC_ALL, "de_DE")) selected a ',' decimal separator, a plain
+ * strtod("3.14") would stop at the '.' and read 3. This mirrors the writer's
+ * use of lxlsx_sprintf_dbl for locale-portable output. The fast path (C/POSIX
+ * locale, the common case) is a straight strtod; only a non-'.' locale pays
+ * for a translated scratch copy.
+ */
+double
+lxlsx_strtod(const char *str, char **endptr)
+{
+    struct lconv *lc = localeconv();
+    char sep = (lc && lc->decimal_point) ? lc->decimal_point[0] : '.';
+
+    /* Fast path: the locale already uses a single-byte '.' separator. */
+    if (sep == '.' && lc->decimal_point[1] == '\0')
+        return strtod(str, endptr);
+
+    /* Only a single-byte separator can be translated 1:1 while keeping byte
+     * offsets (needed to map endptr back). No real locale uses a multi-byte
+     * decimal point; fall back to plain strtod in that theoretical case. */
+    if (lc->decimal_point[1] != '\0')
+        return strtod(str, endptr);
+
+    {
+        size_t len = strlen(str);
+        char   stackbuf[128];
+        char  *copy = (len < sizeof(stackbuf)) ? stackbuf : malloc(len + 1);
+        char  *end  = NULL;
+        double value;
+        size_t i;
+
+        if (!copy)                       /* OOM: best-effort fallback */
+            return strtod(str, endptr);
+
+        for (i = 0; i <= len; i++)
+            copy[i] = (str[i] == '.') ? sep : str[i];
+
+        value = strtod(copy, &end);
+        if (endptr)
+            *endptr = (char *) str + (end - copy);
+
+        if (copy != stackbuf)
+            free(copy);
+
+        return value;
+    }
+}
 
 /*
  * Retrieve runtime library version.

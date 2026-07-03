@@ -542,6 +542,8 @@ lxlsx_new_attribute_str(const char *key, const char *value)
 {
     struct lxlsx_xml_attribute *attribute = malloc(sizeof(struct lxlsx_xml_attribute));
 
+    if (!attribute) return NULL;
+
     LXLSX_ATTRIBUTE_COPY(attribute->key, key);
     LXLSX_ATTRIBUTE_COPY(attribute->value, value);
 
@@ -554,6 +556,8 @@ lxlsx_new_attribute_int(const char *key, int32_t value)
 {
     struct lxlsx_xml_attribute *attribute = malloc(sizeof(struct lxlsx_xml_attribute));
 
+    if (!attribute) return NULL;
+
     LXLSX_ATTRIBUTE_COPY(attribute->key, key);
     lxlsx_snprintf(attribute->value, LXLSX_MAX_ATTRIBUTE_LENGTH, "%d", value);
 
@@ -565,6 +569,8 @@ struct lxlsx_xml_attribute *
 lxlsx_new_attribute_dbl(const char *key, double value)
 {
     struct lxlsx_xml_attribute *attribute = malloc(sizeof(struct lxlsx_xml_attribute));
+
+    if (!attribute) return NULL;
 
     LXLSX_ATTRIBUTE_COPY(attribute->key, key);
     lxlsx_sprintf_dbl(attribute->value, value);

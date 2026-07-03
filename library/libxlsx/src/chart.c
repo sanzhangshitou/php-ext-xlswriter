@@ -7487,8 +7487,11 @@ lxlsx_reader_error lxlsx_reader_worksheet_iterate_charts(lxlsx_reader_worksheet 
                         }
                     }
                 }
-                info.series       = info_series;
-                info.series_count = ch.series_count;
+                info.series = info_series;
+                /* Keep count consistent with the pointer: on calloc failure
+                 * info_series is NULL, so report zero series rather than let
+                 * the callback walk a NULL array by the original count. */
+                info.series_count = info_series ? ch.series_count : 0;
 
                 if (cb(&info, userdata) != 0) stop = 1;
                 free(info_series);

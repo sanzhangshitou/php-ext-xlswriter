@@ -15,6 +15,22 @@
 #include "libxlsx/formula.h"
 #include "libxlsx/utility.h"
 
+/* Guards against pathological input from untrusted formulas. The formula
+ * string, the recursive-descent parser and the range evaluator all take
+ * attacker-controlled input (see lxlsx_formula_eval), so each is bounded:
+ *   - MAX_LEN caps the source length, which in turn bounds the AST size and
+ *     therefore the eval()/node_free() recursion on a flat left-leaning tree
+ *     such as 1+1+1+...;
+ *   - MAX_DEPTH caps recursive-descent nesting (deeply nested parens / unary
+ *     '-' / function args), which would otherwise blow the C stack;
+ *   - MAX_RANGE_CELLS caps how many cells one range aggregate visits so a
+ *     single =SUM(A1:XFD1048576) can't spin for hours.
+ * Excel's own limits (8192-char formulas, 64 nesting levels) sit well under
+ * these, so real formulas are unaffected. */
+#define LXLSX_FORMULA_MAX_LEN         8192
+#define LXLSX_FORMULA_MAX_DEPTH       256
+#define LXLSX_FORMULA_MAX_RANGE_CELLS 1048576u
+
 /* ===================================================================== *
  * Value helpers
  * ===================================================================== */
@@ -103,6 +119,7 @@ typedef struct {
     size_t pos, n;
     tok cur;
     int failed;     /* parse error */
+    int depth;      /* recursive-descent nesting, bounded by MAX_DEPTH */
 } pstate;
 
 static int is_idstart(char c) {
@@ -170,7 +187,7 @@ static void lex_next(pstate *p)
 
     if ((c >= '0' && c <= '9') || c == '.') {   /* number */
         char *end = NULL;
-        p->cur.num = strtod(p->src + p->pos, &end);
+        p->cur.num = lxlsx_strtod(p->src + p->pos, &end);
         p->cur.kind = TK_NUMBER;
         p->pos = (size_t)(end - p->src);
         return;
@@ -404,8 +421,12 @@ static node *parse_postfix(pstate *p)
 static node *parse_unary(pstate *p)
 {
     if (op_is(p, "-") || op_is(p, "+")) {
-        char op[3]; strcpy(op, p->cur.op); lex_next(p);
-        return make_unary(p, op, parse_unary(p));
+        char op[3]; node *operand;
+        strcpy(op, p->cur.op); lex_next(p);
+        if (++p->depth > LXLSX_FORMULA_MAX_DEPTH) { p->depth--; p->failed = 1; return NULL; }
+        operand = parse_unary(p);
+        p->depth--;
+        return make_unary(p, op, operand);
     }
     return parse_postfix(p);
 }
@@ -441,12 +462,15 @@ static node *parse_concat(pstate *p)
 }
 static node *parse_expr(pstate *p)
 {
-    node *a = parse_concat(p);
+    node *a;
+    if (++p->depth > LXLSX_FORMULA_MAX_DEPTH) { p->depth--; p->failed = 1; return NULL; }
+    a = parse_concat(p);
     while (op_is(p, "=") || op_is(p, "<>") || op_is(p, "<") ||
            op_is(p, ">") || op_is(p, "<=") || op_is(p, ">=")) {
         char op[3]; strcpy(op, p->cur.op); lex_next(p);
         a = make_binary(p, op, a, parse_concat(p));
     }
+    p->depth--;
     return a;
 }
 
@@ -473,7 +497,7 @@ static double to_number(const lxlsx_value *v, lxlsx_formula_error *err)
     case LXLSX_VAL_STRING: {
         if (!v->string || !*v->string) return 0.0;
         char *end = NULL;
-        double d = strtod(v->string, &end);
+        double d = lxlsx_strtod(v->string, &end);
         while (end && (*end == ' ' || *end == '\t')) end++;
         if (end && *end == '\0') return d;
         *err = LXLSX_FERR_VALUE; return 0.0;
@@ -501,7 +525,7 @@ static char *to_string(const lxlsx_value *v)
         if (d == (double)(long long)d && fabs(d) < 1e15)
             snprintf(buf, sizeof(buf), "%lld", (long long)d);
         else
-            snprintf(buf, sizeof(buf), "%.15g", d);
+            lxlsx_sprintf_dbl(buf, d);  /* locale-independent decimal point */
         return strdup(buf);
     }
     }
@@ -528,6 +552,19 @@ static void iterate_range(ev *e, node *n, range_cb cb, void *acc)
     lxlsx_col_t c1 = n->col, c2 = n->col2;
     if (r1 > r2) { lxlsx_row_t t = r1; r1 = r2; r2 = t; }
     if (c1 > c2) { lxlsx_col_t t = c1; c1 = c2; c2 = t; }
+    /* Refuse ranges that would visit an absurd number of cells (e.g.
+     * A1:XFD1048576). Surface a #NUM! error through the accumulator rather
+     * than brute-forcing billions of resolver calls. */
+    {
+        uint64_t rows  = (uint64_t)(r2 - r1) + 1;
+        uint64_t cols  = (uint64_t)(c2 - c1) + 1;
+        if (rows * cols > LXLSX_FORMULA_MAX_RANGE_CELLS) {
+            lxlsx_value err = val_error(LXLSX_FERR_NUM);
+            cb(acc, &err);
+            lxlsx_value_free(&err);
+            return;
+        }
+    }
     for (r = r1; r <= r2; r++) {
         for (c = c1; c <= c2; c++) {
             lxlsx_value v = resolve_cell(e, r, c);
@@ -885,6 +922,16 @@ lxlsx_error lxlsx_formula_eval(const char *formula,
     p.pos = 0;
     p.n = strlen(formula);
     p.failed = 0;
+    p.depth = 0;
+
+    /* Reject pathologically long input up front: it bounds AST size and thus
+     * the eval()/node_free() recursion depth. Surface as an in-band error,
+     * matching the unparseable-formula path below. */
+    if (p.n > LXLSX_FORMULA_MAX_LEN) {
+        *out = val_error(LXLSX_FERR_NAME);
+        return LXLSX_NO_ERROR;
+    }
+
     lex_next(&p);
 
     root = parse_expr(&p);
