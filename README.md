@@ -72,8 +72,8 @@ xlswriter is a PHP C Extension for Excel 2007+ XLSX files. It writes text, numbe
 
 ###### Unix
 
-xlswriter requires the zlib development headers at build time. Install them
-first if they are missing (common on minimal images):
+Both install methods below build from source, so the zlib development headers
+must be present first (they are often missing on minimal images):
 
 ```bash
 # Debian / Ubuntu
@@ -84,8 +84,23 @@ apk add zlib-dev
 yum install -y zlib-devel
 ```
 
+Then install with either **PECL** or **PIE**:
+
+**PECL**
+
 ```bash
 pecl install xlswriter
+```
+
+**PIE**
+
+[PIE](https://github.com/php/pie) also builds from source and additionally needs
+the autotools build chain (autoconf, make, a compiler and **libtool**). It can
+install those missing build tools for you with `--auto-install-build-tools`, but
+it cannot install zlib — make sure the headers above are in place first:
+
+```bash
+pie install --auto-install-build-tools viest/xlswriter
 ```
 
 ###### Windows

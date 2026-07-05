@@ -70,6 +70,44 @@ xlswriter 是一个 PHP C 扩展，用于处理 Excel 2007+ XLSX 文件：向新
 * 读取图片、图表与批注
 * 读取公式及其缓存值
 
+#### 安装
+
+###### Unix
+
+下面两种安装方式都是从源码编译，因此需要先装好 zlib 开发头文件（最小镜像通常缺失）：
+
+```bash
+# Debian / Ubuntu
+apt-get install -y zlib1g-dev
+# Alpine
+apk add zlib-dev
+# RHEL / CentOS / Fedora
+yum install -y zlib-devel
+```
+
+然后用 **PECL** 或 **PIE** 任选其一安装：
+
+**PECL**
+
+```bash
+pecl install xlswriter
+```
+
+**PIE**
+
+[PIE](https://github.com/php/pie) 同样从源码编译，除上面的 zlib 开发头文件外，还需要
+autotools 构建链（autoconf、make、编译器以及 **libtool**）。PIE 可以用
+`--auto-install-build-tools` 自动安装缺失的构建工具，但无法安装 zlib——请先确保上面的
+头文件已就位：
+
+```bash
+pie install --auto-install-build-tools viest/xlswriter
+```
+
+###### Windows
+
+[下载 dll](https://github.com/viest/php-ext-xlswriter/releases)
+
 #### 基准测试
 
 测试环境: Macbook Pro 13 inch, Intel Core i5, 16GB 2133MHz LPDDR3 Memory, 128GB SSD Storage.
