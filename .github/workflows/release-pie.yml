@@ -36,7 +36,29 @@ jobs:
           zipf="${GITHUB_WORKSPACE}/php_xlswriter-${tag}-src.zip"
 
           mkdir -p "${stage}"
-          rsync -a --exclude='.git' --exclude='.github' ./ "${stage}/"
+          # Ship only what is needed to build the extension. In particular the
+          # expat submodule carries ~82 MB of XML test data under
+          # library/libexpat/testdata; bundling it inflated the source archive
+          # to ~86 MB uncompressed, which exhausted PHP's default 128 MB
+          # memory_limit while Composer/PIE extracted the tarball on install
+          # (issue: `pie install viest/xlswriter` fatal in TarDownloader). Only
+          # library/libexpat/expat/lib is compiled (see config.m4), so drop the
+          # rest of expat plus our own dev-only trees.
+          rsync -a \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='library/libexpat/testdata' \
+            --exclude='library/libexpat/expat/tests' \
+            --exclude='library/libexpat/expat/examples' \
+            --exclude='library/libexpat/expat/fuzz' \
+            --exclude='library/libexpat/expat/xmlwf' \
+            --exclude='library/libexpat/expat/doc' \
+            --exclude='library/libxlsx/test' \
+            --exclude='bench' \
+            --exclude='backup' \
+            --exclude='examples' \
+            --exclude='resource' \
+            ./ "${stage}/"
 
           tar -C "${RUNNER_TEMP}" -czf "${tgz}" "xlswriter-${tag}"
           ( cd "${RUNNER_TEMP}" && zip -qr "${zipf}" "xlswriter-${tag}" )
@@ -45,6 +67,17 @@ jobs:
           # missing from the package.
           tar tzf "${tgz}" | grep -q "xlswriter-${tag}/config.m4"
           tar tzf "${tgz}" | grep -q "xlswriter-${tag}/library/libexpat/expat/lib/xmlparse.c"
+          # Guard against re-bloating the archive: the expat test data must not
+          # come back, and the compressed tarball should stay small.
+          if tar tzf "${tgz}" | grep -q "library/libexpat/testdata"; then
+            echo "error: expat testdata leaked back into the source package" >&2
+            exit 1
+          fi
+          size=$(stat -c%s "${tgz}")
+          if [ "${size}" -gt 5242880 ]; then
+            echo "error: source tarball is ${size} bytes (> 5 MiB); check for bundled bloat" >&2
+            exit 1
+          fi
 
       - name: Upload to release
         env:
