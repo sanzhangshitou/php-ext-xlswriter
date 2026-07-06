@@ -38,7 +38,7 @@ jobs:
       - name: Linux dependencies
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update
+          sudo apt-get update --allow-releaseinfo-change
           sudo apt-get install -y zlib1g-dev
 
       - name: Windows dependencies
@@ -170,6 +170,11 @@ jobs:
             php-versions: '7.2'
           - operating-system: ubuntu-22.04
             php-versions: '7.3'
+          # PHP 8.6 (first alpha is out). Linux-only like the 7.x entries
+          # above; the extension builds and passes the full suite on it, so it
+          # is a required check rather than an experimental one.
+          - operating-system: ubuntu-22.04
+            php-versions: '8.6'
 
     steps:
       - name: Checkout
@@ -185,7 +190,7 @@ jobs:
       - name: Linux dependencies
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update
+          sudo apt-get update --allow-releaseinfo-change
           sudo apt-get install -y zlib1g-dev
 
       - name: Build extension
@@ -205,6 +210,49 @@ jobs:
               -n bench/leak_stress.php
         env:
           LEAK_STRESS_ITER: 50
+
+  build-test-32bit:
+    name: 32-bit (i386, PHP 8.2)
+    needs:
+      - libxlsx-test
+      - libxlsx-container-test
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # 32-bit PHP has no 64-bit int type, so the reader returns integers above
+      # PHP_INT_MAX as exact-digit strings instead of native ints (issue #587).
+      # Build and run the full PHPT suite on i386 to guard that path against
+      # regressions. i386 runs natively on the amd64 runner (no qemu); checkout
+      # stays on the host because GitHub's node-based actions cannot run inside
+      # a 32-bit container, so only the build and tests run in the container.
+      - name: Build and test on 32-bit (i386)
+        run: |
+          docker run --rm --platform linux/386 \
+            -v "$GITHUB_WORKSPACE":/src -w /src \
+            i386/debian:bookworm bash -c '
+              set -eu
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y --no-install-recommends \
+                php-cli php-dev zlib1g-dev gcc make autoconf libtool \
+                pkg-config re2c file unzip
+              php -r "exit(PHP_INT_SIZE === 4 ? 0 : 1);"
+              phpize
+              ./configure
+              make -j"$(nproc)"
+              make test TESTS="--show-diff -q" NO_INTERACTION=1
+              # make test does not always exit non-zero on PHPT failures; a
+              # leftover .diff means at least one test failed.
+              if ls tests/*.diff >/dev/null 2>&1; then
+                echo "::error::PHPT failures on 32-bit"
+                for d in tests/*.diff; do echo "== $d =="; cat "$d"; done
+                exit 1
+              fi
+            '
 
   alpine-musl:
     name: Alpine musl (PHP 8.3)
