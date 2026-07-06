@@ -23,6 +23,14 @@ $excel->constMemory('const_memory_stream_roundtrip.xlsx')
 
 $v = new \Vtiful\Kernel\Excel(['path' => './tests']);
 $data = $v->openFile('const_memory_stream_roundtrip.xlsx')->openSheet()->getSheetData();
+
+/* Column 2 holds integers above 2^31. On 64-bit PHP they read back as native
+   ints; on 32-bit PHP there is no 64-bit int type, so the reader preserves
+   their exact digits as a string instead. Normalise both to string so the
+   round-tripped digits are asserted identically on every architecture — the
+   <=2^31 ints in columns 0-1 still assert native int type below. */
+$data[0][2] = (string) $data[0][2];
+$data[1][2] = (string) $data[1][2];
 var_dump($data);
 ?>
 --CLEAN--
@@ -38,7 +46,7 @@ array(2) {
     [1]=>
     int(42)
     [2]=>
-    int(4294967296)
+    string(10) "4294967296"
     [3]=>
     float(2.5)
     [4]=>
@@ -53,7 +61,7 @@ array(2) {
     [1]=>
     int(65535)
     [2]=>
-    int(9000000000000000000)
+    string(19) "9000000000000000000"
     [3]=>
     float(3.125)
     [4]=>
