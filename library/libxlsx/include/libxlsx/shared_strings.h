@@ -37,12 +37,15 @@ STAILQ_HEAD(lxlsx_sst_order_list, lxlsx_sst_element);
  * in a separate list.
  */
 struct lxlsx_sst_element {
-    uint32_t index;
+    /* Pointer-aligned members first: with the scalars leading, LP64 padding
+     * inflated this per-unique-string node from 56 to 64 bytes. */
     char *string;
-    uint8_t is_rich_string;
 
     STAILQ_ENTRY (lxlsx_sst_element) lxlsx_sst_order_pointers;
     RB_ENTRY (lxlsx_sst_element) lxlsx_sst_tree_pointers;
+
+    uint32_t index;
+    uint8_t is_rich_string;
 };
 
 /*

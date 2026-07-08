@@ -12,6 +12,7 @@
 #include <zlib.h>
 
 #include "libxlsx/source_package.h"
+#include "platform.h"
 
 #define ZIP_LOCAL_FILE_SIG   0x04034b50u
 #define ZIP_CENTRAL_FILE_SIG 0x02014b50u
@@ -134,10 +135,16 @@ static lxlsx_error write_le32(FILE *fp, uint32_t v)
 
 static lxlsx_error current_offset(FILE *fp, uint32_t *out)
 {
-    long pos = ftell(fp);
+    /* 64-bit query where the platform supports it (lxlsx_ftello maps to
+     * _ftelli64 on MSVC; ftello elsewhere, which stays 32-bit where off_t is
+     * 32-bit, e.g. MinGW/ILP32). The 4GB ZIP64 guard is compared in a fixed
+     * 64-bit unsigned domain: pos is non-negative here, and casting the
+     * threshold to lxlsx_reader_off_t would truncate to -1 (making the guard
+     * fire for every offset) when that type is a 32-bit signed off_t. */
+    lxlsx_reader_off_t pos = lxlsx_ftello(fp);
     if (pos < 0)
         return LXLSX_ERROR_ZIP_FILE_OPERATION;
-    if ((unsigned long)pos > 0xffffffffUL)
+    if ((uint64_t) pos > 0xffffffffULL)
         return LXLSX_ERROR_FEATURE_NOT_SUPPORTED;
     *out = (uint32_t)pos;
     return LXLSX_NO_ERROR;
@@ -401,7 +408,7 @@ static lxlsx_error parse_package(lxlsx_source_package *package)
 static lxlsx_error slurp_file(const char *path, unsigned char **out, size_t *out_len)
 {
     FILE *fp;
-    long size;
+    lxlsx_reader_off_t size;
     unsigned char *buf;
     size_t got;
 
@@ -416,10 +423,17 @@ static lxlsx_error slurp_file(const char *path, unsigned char **out, size_t *out
         fclose(fp);
         return LXLSX_ERROR_ZIP_FILE_OPERATION;
     }
-    size = ftell(fp);
+    /* 64-bit size query: plain ftell caps the openable file size at 2GB
+     * where long is 32-bit (Windows, ILP32). */
+    size = lxlsx_ftello(fp);
     if (size < 0) {
         fclose(fp);
         return LXLSX_ERROR_ZIP_FILE_OPERATION;
+    }
+    if ((unsigned long long) size > (unsigned long long) (size_t) -1) {
+        /* Larger than this target's address space can hold. */
+        fclose(fp);
+        return LXLSX_ERROR_FEATURE_NOT_SUPPORTED;
     }
     if (fseek(fp, 0, SEEK_SET) != 0) {
         fclose(fp);

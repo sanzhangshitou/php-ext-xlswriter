@@ -49,6 +49,7 @@
 #include "libxlsx/packager.h"
 #include "libxlsx/hash_table.h"
 #include "libxlsx/utility.h"
+#include "platform.h"
 
 /*
  * Deflate level for zip members. zlib's default (6) enables lazy match
@@ -144,30 +145,33 @@ _fclose_memstream(voidpf opaque, voidpf stream)
 {
     lxlsx_packager *packager = (lxlsx_packager *) opaque;
     FILE *file = (FILE *) stream;
-    long size;
+    lxlsx_reader_off_t size;
 
     /* Ensure memstream buffer is updated */
     if (fflush(file))
         goto mem_error;
 
     /* If the memstream is backed by a temporary file, no buffer is created,
-       so create it manually. */
+       so create it manually. Mirrors lxlsx_capture_filehandle(): 64-bit size
+       query (plain ftell caps at 2GB where long is 32-bit), zero-length-safe
+       malloc and fread. */
     if (!packager->output_buffer) {
         if (fseek(file, 0L, SEEK_END))
             goto mem_error;
 
-        size = ftell(file);
-        if (size == -1)
+        size = lxlsx_ftello(file);
+        if (size < 0 || (unsigned long long) size >= (unsigned long long) (size_t) -1)
             goto mem_error;
 
-        packager->output_buffer = malloc(size);
+        packager->output_buffer = malloc((size_t) size + 1);
         GOTO_LABEL_ON_MEM_ERROR(packager->output_buffer, mem_error);
 
         rewind(file);
-        if (fread((void *) packager->output_buffer, size, 1, file) < 1)
+        if (size > 0
+            && fread((void *) packager->output_buffer, (size_t) size, 1, file) < 1)
             goto mem_error;
 
-        packager->output_buffer_size = size;
+        packager->output_buffer_size = (size_t) size;
     }
 
     return fclose(file);

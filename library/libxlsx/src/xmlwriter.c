@@ -165,6 +165,32 @@ lxlsx_xml_rich_si_element(FILE *xmlfile, const char *string)
 }
 
 /*
+ * Write a <t> element for a shared-string or rich-string fragment, adding
+ * xml:space="preserve" when leading/trailing whitespace must survive. Shared
+ * by shared_strings.c and styles.c so the whitespace heuristic lives in one
+ * place; the length guard keeps an empty string from reading string[-1].
+ */
+void
+lxlsx_xml_write_t_element(FILE *xmlfile, const char *string)
+{
+    struct lxlsx_xml_attribute_list attributes;
+    struct lxlsx_xml_attribute *attribute;
+    size_t len = string ? strlen(string) : 0;
+
+    LXLSX_INIT_ATTRIBUTES();
+
+    /* Add attribute to preserve leading or trailing whitespace. */
+    if (len
+        && (isspace((unsigned char) string[0])
+            || isspace((unsigned char) string[len - 1])))
+        LXLSX_PUSH_ATTRIBUTES_STR("xml:space", "preserve");
+
+    lxlsx_xml_data_element(xmlfile, "t", string, &attributes);
+
+    LXLSX_FREE_ATTRIBUTES();
+}
+
+/*
  * Escape XML characters in attributes.
  */
 STATIC char *
@@ -285,7 +311,10 @@ lxlsx_escape_data(const char *data)
 {
     size_t encoded_len = (strlen(data) * 5 + 1);
 
-    char *encoded = (char *) calloc(encoded_len, 1);
+    /* Plain malloc: the escape callback below fills exactly the bytes it
+     * needs and the terminator is written explicitly, so zeroing the whole
+     * worst-case buffer (5x the input) would be pure waste. */
+    char *encoded = (char *) malloc(encoded_len);
     char *p_encoded = encoded;
 
     if (!encoded)
@@ -297,6 +326,7 @@ lxlsx_escape_data(const char *data)
         return NULL;
     }
 
+    *p_encoded = '\0';
     return encoded;
 }
 

@@ -111,27 +111,6 @@ _element_cmp(struct lxlsx_sst_element *element1, struct lxlsx_sst_element *eleme
 LXLSX_DEFINE_XML_DECLARATION(_sst_xml_declaration, lxlsx_sst)
 
 /*
- * Write the <t> element.
- */
-STATIC void
-_write_t(lxlsx_sst *self, char *string)
-{
-    struct lxlsx_xml_attribute_list attributes;
-    struct lxlsx_xml_attribute *attribute;
-
-    LXLSX_INIT_ATTRIBUTES();
-
-    /* Add attribute to preserve leading or trailing whitespace. */
-    if (isspace((unsigned char) string[0])
-        || isspace((unsigned char) string[strlen(string) - 1]))
-        LXLSX_PUSH_ATTRIBUTES_STR("xml:space", "preserve");
-
-    lxlsx_xml_data_element(self->file, "t", string, &attributes);
-
-    LXLSX_FREE_ATTRIBUTES();
-}
-
-/*
  * Write the <si> element.
  */
 STATIC void
@@ -148,7 +127,7 @@ _write_si(lxlsx_sst *self, char *string)
     }
 
     /* Write the t element. */
-    _write_t(self, string);
+    lxlsx_xml_write_t_element(self->file, string);
 
     lxlsx_xml_end_tag(self->file, "si");
 

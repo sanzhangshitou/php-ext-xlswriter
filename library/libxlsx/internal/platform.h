@@ -36,4 +36,14 @@
 #  define lxlsx_reader_lseek(fd, off, whence)  lseek((fd), (off), (whence))
 #endif
 
+/* 64-bit ftell: plain ftell() returns long, which is 32-bit on Windows and
+ * ILP32 targets and caps whole-file sizes / ZIP offsets at 2GB. Writer and
+ * edit paths use this for file-size and offset queries. */
+#include <stdio.h>
+#if defined(_MSC_VER)
+#  define lxlsx_ftello(fp) _ftelli64(fp)
+#else
+#  define lxlsx_ftello(fp) ftello(fp)
+#endif
+
 #endif

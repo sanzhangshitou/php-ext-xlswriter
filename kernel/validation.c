@@ -564,6 +564,8 @@ PHP_METHOD(vtiful_validation, valueDatetime)
         RETURN_NULL();
     }
 
+    ZVAL_COPY(return_value, getThis());
+
     obj->ptr.validation->value_datetime = timestamp_to_datetime(timestamp);
 }
 /* }}} */
@@ -631,6 +633,8 @@ PHP_METHOD(vtiful_validation, minimumDatetime)
         RETURN_NULL();
     }
 
+    ZVAL_COPY(return_value, getThis());
+
     obj->ptr.validation->minimum_datetime = timestamp_to_datetime(timestamp);
 }
 /* }}} */
@@ -697,6 +701,8 @@ PHP_METHOD(vtiful_validation, maximumDatetime)
     if (obj->ptr.validation == NULL) {
         RETURN_NULL();
     }
+
+    ZVAL_COPY(return_value, getThis());
 
     obj->ptr.validation->maximum_datetime = timestamp_to_datetime(timestamp);
 }

@@ -88,19 +88,7 @@ lxlsx_styles_free(lxlsx_styles *styles)
 void
 lxlsx_styles_write_string_fragment(lxlsx_styles *self, const char *string)
 {
-    struct lxlsx_xml_attribute_list attributes;
-    struct lxlsx_xml_attribute *attribute;
-
-    LXLSX_INIT_ATTRIBUTES();
-
-    /* Add attribute to preserve leading or trailing whitespace. */
-    if (isspace((unsigned char) string[0])
-        || isspace((unsigned char) string[strlen(string) - 1]))
-        LXLSX_PUSH_ATTRIBUTES_STR("xml:space", "preserve");
-
-    lxlsx_xml_data_element(self->file, "t", string, &attributes);
-
-    LXLSX_FREE_ATTRIBUTES();
+    lxlsx_xml_write_t_element(self->file, string);
 }
 
 void
