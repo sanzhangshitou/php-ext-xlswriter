@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include "libxlsx.h"
 #include "libxlsx/common.h"
+#include "platform.h"
 #include "libxlsx/third_party/tmpfileplus.h"
 
 #define LXLSX_TMPFILE_BUFFER_SIZE (64 * 1024)
@@ -723,11 +724,15 @@ lxlsx_capture_filehandle(FILE *fh, char *buffer, size_t buffer_size,
         *out_len = buffer_size;
     }
     else {
-        /* tmpfile backend: read the contents back. */
-        long size;
+        /* tmpfile backend: read the contents back. 64-bit size query: plain
+         * ftell caps at 2GB where long is 32-bit (Windows, ILP32). */
+        lxlsx_reader_off_t size;
         if (fseek(fh, 0L, SEEK_END)) { err = LXLSX_ERROR_CREATING_TMPFILE; goto done; }
-        size = ftell(fh);
-        if (size < 0) { err = LXLSX_ERROR_CREATING_TMPFILE; goto done; }
+        size = lxlsx_ftello(fh);
+        if (size < 0 || (unsigned long long) size >= (unsigned long long) (size_t) -1) {
+            err = LXLSX_ERROR_CREATING_TMPFILE;
+            goto done;
+        }
         *out = malloc((size_t) size + 1);
         if (!*out) { err = LXLSX_ERROR_MEMORY_MALLOC_FAILED; goto done; }
         rewind(fh);

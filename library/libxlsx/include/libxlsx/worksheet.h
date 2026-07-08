@@ -2165,6 +2165,12 @@ typedef struct lxlsx_worksheet {
     uint8_t optimize;
     struct lxlsx_row *optimize_row;
 
+    /* constant_memory cell recycling: cells live for exactly one row before
+     * the flush loop discards them, so released structs are chained through
+     * their (payload-free) data union instead of a free()/calloc() round
+     * trip per cell. Normal mode never pushes here. */
+    struct lxlsx_cell *cell_pool;
+
     uint16_t fit_height;
     uint16_t fit_width;
     uint16_t horizontal_dpi;

@@ -377,14 +377,11 @@ _free_filter_rules(lxlsx_worksheet *worksheet)
 }
 
 /*
- * Free a worksheet cell.
+ * Free a worksheet cell's owned payload, keeping the struct itself.
  */
 STATIC void
-_free_cell(lxlsx_cell *cell)
+_free_cell_payload(lxlsx_cell *cell)
 {
-    if (!cell)
-        return;
-
     switch (cell->type) {
     case INLINE_STRING_CELL:
     case INLINE_RICH_STRING_CELL:
@@ -415,8 +412,54 @@ _free_cell(lxlsx_cell *cell)
     default:
         break;
     }
+}
 
+/*
+ * Free a worksheet cell.
+ */
+STATIC void
+_free_cell(lxlsx_cell *cell)
+{
+    if (!cell)
+        return;
+
+    _free_cell_payload(cell);
     free(cell);
+}
+
+/*
+ * Allocate a zeroed cell, reusing a recycled struct from the worksheet's
+ * constant_memory pool when one is available. Normal mode never recycles,
+ * so the pool stays empty and this is a plain calloc.
+ */
+STATIC lxlsx_cell *
+_cell_calloc(lxlsx_worksheet *self)
+{
+    lxlsx_cell *cell = self ? self->cell_pool : NULL;
+
+    if (cell) {
+        memcpy(&self->cell_pool, &cell->data, sizeof(lxlsx_cell *));
+        memset(cell, 0, sizeof(*cell));
+        return cell;
+    }
+
+    return calloc(1, sizeof(lxlsx_cell));
+}
+
+/*
+ * Release a cell in constant_memory mode: free the owned payload and chain
+ * the struct into the pool through its now-unused data union, avoiding the
+ * per-cell free()/calloc() round trip of the row flush loop.
+ */
+STATIC void
+_recycle_cell(lxlsx_worksheet *self, lxlsx_cell *cell)
+{
+    if (!cell)
+        return;
+
+    _free_cell_payload(cell);
+    memcpy(&cell->data, &self->cell_pool, sizeof(lxlsx_cell *));
+    self->cell_pool = cell;
 }
 
 /*
@@ -829,6 +872,15 @@ lxlsx_worksheet_free(lxlsx_worksheet *worksheet)
         free(worksheet->array);
     }
 
+    /* Drain the constant_memory cell pool: recycled structs own no payload
+     * and are chained through their data union. */
+    while (worksheet->cell_pool) {
+        lxlsx_cell *pool_next;
+        memcpy(&pool_next, &worksheet->cell_pool->data, sizeof(pool_next));
+        free(worksheet->cell_pool);
+        worksheet->cell_pool = pool_next;
+    }
+
     if (worksheet->optimize_row)
         free(worksheet->optimize_row);
 
@@ -896,10 +948,10 @@ _new_row(lxlsx_row_t row_num)
  * Create a new worksheet number cell object.
  */
 STATIC lxlsx_cell *
-_new_number_cell(lxlsx_row_t row_num,
+_new_number_cell(lxlsx_worksheet *self, lxlsx_row_t row_num,
                  lxlsx_col_t col_num, double value, lxlsx_format *format)
 {
-    lxlsx_cell *cell = calloc(1, sizeof(lxlsx_cell));
+    lxlsx_cell *cell = _cell_calloc(self);
     RETURN_ON_MEM_ERROR(cell, cell);
 
     cell->row_num = row_num;
@@ -915,11 +967,11 @@ _new_number_cell(lxlsx_row_t row_num,
  * Create a new worksheet string cell object.
  */
 STATIC lxlsx_cell *
-_new_string_cell(lxlsx_row_t row_num,
+_new_string_cell(lxlsx_worksheet *self, lxlsx_row_t row_num,
                  lxlsx_col_t col_num, int32_t string_id, char *lxlsx_sst_string,
                  lxlsx_format *format)
 {
-    lxlsx_cell *cell = calloc(1, sizeof(lxlsx_cell));
+    lxlsx_cell *cell = _cell_calloc(self);
     RETURN_ON_MEM_ERROR(cell, cell);
 
     cell->row_num = row_num;
@@ -936,10 +988,10 @@ _new_string_cell(lxlsx_row_t row_num,
  * Create a new worksheet inline_string cell object.
  */
 STATIC lxlsx_cell *
-_new_inline_string_cell(lxlsx_row_t row_num,
+_new_inline_string_cell(lxlsx_worksheet *self, lxlsx_row_t row_num,
                         lxlsx_col_t col_num, char *string, lxlsx_format *format)
 {
-    lxlsx_cell *cell = calloc(1, sizeof(lxlsx_cell));
+    lxlsx_cell *cell = _cell_calloc(self);
     RETURN_ON_MEM_ERROR(cell, cell);
 
     cell->row_num = row_num;
@@ -955,11 +1007,11 @@ _new_inline_string_cell(lxlsx_row_t row_num,
  * Create a new worksheet inline_string cell object for rich strings.
  */
 STATIC lxlsx_cell *
-_new_inline_rich_string_cell(lxlsx_row_t row_num,
+_new_inline_rich_string_cell(lxlsx_worksheet *self, lxlsx_row_t row_num,
                              lxlsx_col_t col_num, const char *string,
                              lxlsx_format *format)
 {
-    lxlsx_cell *cell = calloc(1, sizeof(lxlsx_cell));
+    lxlsx_cell *cell = _cell_calloc(self);
     RETURN_ON_MEM_ERROR(cell, cell);
 
     cell->row_num = row_num;
@@ -975,10 +1027,10 @@ _new_inline_rich_string_cell(lxlsx_row_t row_num,
  * Create a new worksheet formula cell object.
  */
 STATIC lxlsx_cell *
-_new_formula_cell(lxlsx_row_t row_num,
+_new_formula_cell(lxlsx_worksheet *self, lxlsx_row_t row_num,
                   lxlsx_col_t col_num, char *formula, lxlsx_format *format)
 {
-    lxlsx_cell *cell = calloc(1, sizeof(lxlsx_cell));
+    lxlsx_cell *cell = _cell_calloc(self);
     RETURN_ON_MEM_ERROR(cell, cell);
 
     cell->data.writer.value.formula =
@@ -1001,10 +1053,11 @@ _new_formula_cell(lxlsx_row_t row_num,
  * Create a new worksheet array formula cell object.
  */
 STATIC lxlsx_cell *
-_new_array_formula_cell(lxlsx_row_t row_num, lxlsx_col_t col_num, char *formula,
+_new_array_formula_cell(lxlsx_worksheet *self, lxlsx_row_t row_num,
+                        lxlsx_col_t col_num, char *formula,
                         char *range, lxlsx_format *format, uint8_t is_dynamic)
 {
-    lxlsx_cell *cell = calloc(1, sizeof(lxlsx_cell));
+    lxlsx_cell *cell = _cell_calloc(self);
     RETURN_ON_MEM_ERROR(cell, cell);
 
     cell->data.writer.value.formula =
@@ -1032,9 +1085,10 @@ _new_array_formula_cell(lxlsx_row_t row_num, lxlsx_col_t col_num, char *formula,
  * Create a new worksheet blank cell object.
  */
 STATIC lxlsx_cell *
-_new_blank_cell(lxlsx_row_t row_num, lxlsx_col_t col_num, lxlsx_format *format)
+_new_blank_cell(lxlsx_worksheet *self, lxlsx_row_t row_num,
+                lxlsx_col_t col_num, lxlsx_format *format)
 {
-    lxlsx_cell *cell = calloc(1, sizeof(lxlsx_cell));
+    lxlsx_cell *cell = _cell_calloc(self);
     RETURN_ON_MEM_ERROR(cell, cell);
 
     cell->row_num = row_num;
@@ -1049,10 +1103,11 @@ _new_blank_cell(lxlsx_row_t row_num, lxlsx_col_t col_num, lxlsx_format *format)
  * Create a new worksheet boolean cell object.
  */
 STATIC lxlsx_cell *
-_new_boolean_cell(lxlsx_row_t row_num, lxlsx_col_t col_num, int value,
+_new_boolean_cell(lxlsx_worksheet *self, lxlsx_row_t row_num,
+                  lxlsx_col_t col_num, int value,
                   lxlsx_format *format)
 {
-    lxlsx_cell *cell = calloc(1, sizeof(lxlsx_cell));
+    lxlsx_cell *cell = _cell_calloc(self);
     RETURN_ON_MEM_ERROR(cell, cell);
 
     cell->row_num = row_num;
@@ -1068,10 +1123,11 @@ _new_boolean_cell(lxlsx_row_t row_num, lxlsx_col_t col_num, int value,
  * Create a new worksheet error cell object.
  */
 STATIC lxlsx_cell *
-_new_error_cell(lxlsx_row_t row_num, lxlsx_col_t col_num, uint32_t value,
+_new_error_cell(lxlsx_worksheet *self, lxlsx_row_t row_num,
+                lxlsx_col_t col_num, uint32_t value,
                 lxlsx_format *format)
 {
-    lxlsx_cell *cell = calloc(1, sizeof(lxlsx_cell));
+    lxlsx_cell *cell = _cell_calloc(self);
     RETURN_ON_MEM_ERROR(cell, cell);
 
     cell->row_num = row_num;
@@ -1087,10 +1143,11 @@ _new_error_cell(lxlsx_row_t row_num, lxlsx_col_t col_num, uint32_t value,
  * Create a new comment cell object.
  */
 STATIC lxlsx_cell *
-_new_comment_cell(lxlsx_row_t row_num, lxlsx_col_t col_num,
+_new_comment_cell(lxlsx_worksheet *self, lxlsx_row_t row_num,
+                  lxlsx_col_t col_num,
                   lxlsx_vml_obj *comment_obj)
 {
-    lxlsx_cell *cell = calloc(1, sizeof(lxlsx_cell));
+    lxlsx_cell *cell = _cell_calloc(self);
     RETURN_ON_MEM_ERROR(cell, cell);
 
     cell->row_num = row_num;
@@ -1105,11 +1162,12 @@ _new_comment_cell(lxlsx_row_t row_num, lxlsx_col_t col_num,
  * Create a new worksheet hyperlink cell object.
  */
 STATIC lxlsx_cell *
-_new_hyperlink_cell(lxlsx_row_t row_num, lxlsx_col_t col_num,
+_new_hyperlink_cell(lxlsx_worksheet *self, lxlsx_row_t row_num,
+                    lxlsx_col_t col_num,
                     enum cell_types link_type, char *url, char *string,
                     char *tooltip)
 {
-    lxlsx_cell *cell = calloc(1, sizeof(lxlsx_cell));
+    lxlsx_cell *cell = _cell_calloc(self);
     RETURN_ON_MEM_ERROR(cell, cell);
 
     cell->data.writer.value.hyperlink =
@@ -1232,7 +1290,7 @@ _insert_cell(lxlsx_worksheet *self, lxlsx_row_t row_num, lxlsx_col_t col_num,
 
             /* Overwrite an existing cell if necessary. */
             if (self->array[col_num])
-                _free_cell(self->array[col_num]);
+                _recycle_cell(self, self->array[col_num]);
 
             self->array[col_num] = cell;
         }
@@ -1256,7 +1314,7 @@ _insert_cell_placeholder(lxlsx_worksheet *self, lxlsx_row_t row_num,
     if (self->optimize)
         return;
 
-    cell = _new_blank_cell(row_num, col_num, NULL);
+    cell = _new_blank_cell(self, row_num, col_num, NULL);
     if (!cell)
         return;
 
@@ -4496,6 +4554,15 @@ _obuf_write(lxlsx_worksheet *self, const char *s, size_t n)
     self->obuf_len += n;
 }
 
+/* lxlsx_xml_escape_data_write() adapter: stream escaped chunks straight into
+ * the output buffer, so inline strings need no intermediate heap copy. */
+STATIC int
+_obuf_escape_cb(void *userdata, const char *data, size_t len)
+{
+    _obuf_write((lxlsx_worksheet *) userdata, data, len);
+    return 0;
+}
+
 /* Write an unsigned 32-bit value as decimal at `p`, return the digit count. */
 static inline int
 _u32_dec(char *p, uint32_t v)
@@ -4596,107 +4663,78 @@ _cell_ref_prefix(char *p, lxlsx_row_t row_num, lxlsx_col_t col_num,
 
 /*
  * Write out a number worksheet cell. Doesn't use the xml functions as an
- * optimization in the inner cell writing loop.
+ * optimization in the inner cell writing loop: the whole <c> element is
+ * assembled with the hand-rolled formatters and emitted with one write in
+ * both constant_memory (stream buffer) and normal (FILE) mode, skipping the
+ * per-cell fprintf format parsing and the snprintf-backed range string.
  */
 STATIC void
-_write_number_cell(lxlsx_worksheet *self, char *range,
-                   int32_t style_index, lxlsx_cell *cell)
+_write_number_cell(lxlsx_worksheet *self, int32_t style_index,
+                   lxlsx_cell *cell)
 {
-    /* constant_memory fast path: assemble straight into the stream buffer. */
-    if (self->optimize) {
-        char buf[64 + LXLSX_ATTR_32];
-        double value = cell->data.writer.value.number;
-        int n = _cell_ref_prefix(buf, cell->row_num, cell->col_num,
-                                 style_index);
-        buf[n++] = '>';
-        buf[n++] = '<';
-        buf[n++] = 'v';
-        buf[n++] = '>';
+    char buf[64 + LXLSX_ATTR_32];
+    double value = cell->data.writer.value.number;
+    int n = _cell_ref_prefix(buf, cell->row_num, cell->col_num, style_index);
 
-        /* Integer fast path: most bulk numeric data is integral, and the
-         * general double formatter (emyg_dtoa) dominates the write profile.
-         * An integral value in safe int64 range formats byte-identically via
-         * a plain itoa, skipping the float algorithm entirely. The bound stays
-         * inside INT64_MAX/MIN so the cast and negation below are well-defined. */
-        if (value >= -9.2e18 && value <= 9.2e18
-            && value == (double) (int64_t) value) {
-            n += _i64_dec(buf + n, (int64_t) value);
-        }
-        else {
-            char num[LXLSX_ATTR_32];
+    buf[n++] = '>';
+    buf[n++] = '<';
+    buf[n++] = 'v';
+    buf[n++] = '>';
+
+    /* Integer fast path: most bulk numeric data is integral, and the
+     * general double formatter (emyg_dtoa) dominates the write profile.
+     * An integral value in safe int64 range formats byte-identically via
+     * a plain itoa, skipping the float algorithm entirely. The bound stays
+     * inside INT64_MAX/MIN so the cast and negation below are well-defined. */
+    if (value >= -9.2e18 && value <= 9.2e18
+        && value == (double) (int64_t) value) {
+        n += _i64_dec(buf + n, (int64_t) value);
+    }
+    else {
+        char num[LXLSX_ATTR_32];
 #ifdef USE_DTOA_LIBRARY
-            lxlsx_sprintf_dbl(num, value);
+        lxlsx_sprintf_dbl(num, value);
 #else
-            lxlsx_snprintf(num, LXLSX_ATTR_32, "%.16G", value);
+        lxlsx_snprintf(num, LXLSX_ATTR_32, "%.16G", value);
 #endif
-            {
-                size_t len = strlen(num);
-                memcpy(buf + n, num, len);
-                n += (int) len;
-            }
+        {
+            size_t len = strlen(num);
+            memcpy(buf + n, num, len);
+            n += (int) len;
         }
-
-        memcpy(buf + n, "</v></c>", 8);
-        n += 8;
-        _obuf_write(self, buf, (size_t) n);
-        return;
     }
 
-#ifdef USE_DTOA_LIBRARY
-    char data[LXLSX_ATTR_32];
+    memcpy(buf + n, "</v></c>", 8);
+    n += 8;
 
-    lxlsx_sprintf_dbl(data, cell->data.writer.value.number);
-
-    if (style_index)
-        fprintf(self->file,
-                "<c r=\"%s\" s=\"%d\"><v>%s</v></c>",
-                range, style_index, data);
+    if (self->optimize)
+        _obuf_write(self, buf, (size_t) n);
     else
-        fprintf(self->file, "<c r=\"%s\"><v>%s</v></c>", range, data);
-#else
-    if (style_index)
-        fprintf(self->file,
-                "<c r=\"%s\" s=\"%d\"><v>%.16G</v></c>",
-                range, style_index, cell->data.writer.value.number);
-    else
-        fprintf(self->file,
-                "<c r=\"%s\"><v>%.16G</v></c>", range,
-                cell->data.writer.value.number);
-
-#endif
+        (void) fwrite(buf, 1, (size_t) n, self->file);
 }
 
 /*
  * Write out a string worksheet cell. Doesn't use the xml functions as an
- * optimization in the inner cell writing loop.
+ * optimization in the inner cell writing loop; assembled and emitted the
+ * same way as _write_number_cell() in both modes.
  */
 STATIC void
-_write_string_cell(lxlsx_worksheet *self, char *range,
-                   int32_t style_index, lxlsx_cell *cell)
+_write_string_cell(lxlsx_worksheet *self, int32_t style_index,
+                   lxlsx_cell *cell)
 {
-    /* constant_memory fast path. */
-    if (self->optimize) {
-        char buf[80];
-        int n = _cell_ref_prefix(buf, cell->row_num, cell->col_num,
-                                 style_index);
-        memcpy(buf + n, " t=\"s\"><v>", 10);
-        n += 10;
-        n += _u32_dec(buf + n, (uint32_t) cell->data.writer.value.shared_string.id);
-        memcpy(buf + n, "</v></c>", 8);
-        n += 8;
-        _obuf_write(self, buf, (size_t) n);
-        return;
-    }
+    char buf[80];
+    int n = _cell_ref_prefix(buf, cell->row_num, cell->col_num, style_index);
 
-    if (style_index)
-        fprintf(self->file,
-                "<c r=\"%s\" s=\"%d\" t=\"s\"><v>%d</v></c>",
-                range, style_index,
-                cell->data.writer.value.shared_string.id);
+    memcpy(buf + n, " t=\"s\"><v>", 10);
+    n += 10;
+    n += _u32_dec(buf + n, (uint32_t) cell->data.writer.value.shared_string.id);
+    memcpy(buf + n, "</v></c>", 8);
+    n += 8;
+
+    if (self->optimize)
+        _obuf_write(self, buf, (size_t) n);
     else
-        fprintf(self->file,
-                "<c r=\"%s\" t=\"s\"><v>%d</v></c>",
-                range, cell->data.writer.value.shared_string.id);
+        (void) fwrite(buf, 1, (size_t) n, self->file);
 }
 
 /*
@@ -4704,19 +4742,23 @@ _write_string_cell(lxlsx_worksheet *self, char *range,
  * optimization in the inner cell writing loop.
  */
 STATIC void
-_write_inline_string_cell(lxlsx_worksheet *self, char *range,
-                          int32_t style_index, lxlsx_cell *cell)
+_write_inline_string_cell(lxlsx_worksheet *self, int32_t style_index,
+                          lxlsx_cell *cell)
 {
-    char *string = lxlsx_escape_data(cell->data.writer.value.string);
-    size_t slen = strlen(string);
+    const char *raw = cell->data.writer.value.string;
+    size_t rlen = raw ? strlen(raw) : 0;
 
-    /* constant_memory fast path. The escaped string may exceed the buffer, so
-     * it is appended through _obuf_write which streams oversized fragments. */
+    /* Whitespace is never escaped, so deciding xml:space on the raw string
+     * matches the escaped form byte for byte. */
+    int preserve = rlen
+        && (isspace((unsigned char) raw[0])
+            || isspace((unsigned char) raw[rlen - 1]));
+
+    /* constant_memory fast path: escape straight into the stream buffer,
+     * skipping the intermediate worst-case (5x) heap copy entirely. Oversized
+     * chunks stream through _obuf_write. */
     if (self->optimize) {
         char buf[96];
-        int preserve = slen
-            && (isspace((unsigned char) string[0])
-                || isspace((unsigned char) string[slen - 1]));
         int n = _cell_ref_prefix(buf, cell->row_num, cell->col_num,
                                  style_index);
         if (preserve) {
@@ -4728,39 +4770,43 @@ _write_inline_string_cell(lxlsx_worksheet *self, char *range,
             n += 22;
         }
         _obuf_write(self, buf, (size_t) n);
-        _obuf_write(self, string, slen);
+        (void) lxlsx_xml_escape_data_write(raw, _obuf_escape_cb, self);
         _obuf_write(self, "</t></is></c>", 13);
-        free(string);
         return;
     }
 
-    /* Add attribute to preserve leading or trailing whitespace. */
-    if (isspace((unsigned char) string[0])
-        || isspace((unsigned char) string[slen - 1])) {
+    {
+        char range[LXLSX_MAX_CELL_NAME_LENGTH];
+        char *string = lxlsx_escape_data(raw);
 
-        if (style_index)
-            fprintf(self->file,
-                    "<c r=\"%s\" s=\"%d\" t=\"inlineStr\"><is>"
-                    "<t xml:space=\"preserve\">%s</t></is></c>",
-                    range, style_index, string);
-        else
-            fprintf(self->file,
-                    "<c r=\"%s\" t=\"inlineStr\"><is>"
-                    "<t xml:space=\"preserve\">%s</t></is></c>",
-                    range, string);
-    }
-    else {
-        if (style_index)
-            fprintf(self->file,
-                    "<c r=\"%s\" s=\"%d\" t=\"inlineStr\">"
-                    "<is><t>%s</t></is></c>", range, style_index, string);
-        else
-            fprintf(self->file,
-                    "<c r=\"%s\" t=\"inlineStr\">"
-                    "<is><t>%s</t></is></c>", range, string);
-    }
+        lxlsx_rowcol_to_cell(range, cell->row_num, cell->col_num);
 
-    free(string);
+        /* Add attribute to preserve leading or trailing whitespace. */
+        if (preserve) {
+            if (style_index)
+                fprintf(self->file,
+                        "<c r=\"%s\" s=\"%d\" t=\"inlineStr\"><is>"
+                        "<t xml:space=\"preserve\">%s</t></is></c>",
+                        range, style_index, string);
+            else
+                fprintf(self->file,
+                        "<c r=\"%s\" t=\"inlineStr\"><is>"
+                        "<t xml:space=\"preserve\">%s</t></is></c>",
+                        range, string);
+        }
+        else {
+            if (style_index)
+                fprintf(self->file,
+                        "<c r=\"%s\" s=\"%d\" t=\"inlineStr\">"
+                        "<is><t>%s</t></is></c>", range, style_index, string);
+            else
+                fprintf(self->file,
+                        "<c r=\"%s\" t=\"inlineStr\">"
+                        "<is><t>%s</t></is></c>", range, string);
+        }
+
+        free(string);
+    }
 }
 
 /*
@@ -4912,16 +4958,10 @@ _write_cell(lxlsx_worksheet *self, lxlsx_cell *cell, lxlsx_format *row_format)
 {
     struct lxlsx_xml_attribute_list attributes;
     struct lxlsx_xml_attribute *attribute;
-    char range[LXLSX_MAX_CELL_NAME_LENGTH] = { 0 };
+    char range[LXLSX_MAX_CELL_NAME_LENGTH];
     lxlsx_row_t row_num = cell->row_num;
     lxlsx_col_t col_num = cell->col_num;
     int32_t style_index = 0;
-
-    /* In constant_memory mode the hot cell writers below build their own cell
-     * reference from row/col, so skip the snprintf-backed range conversion
-     * here; cold cell types recompute it after flushing the stream buffer. */
-    if (!self->optimize)
-        lxlsx_rowcol_to_cell(range, row_num, col_num);
 
     if (cell->data.writer.format) {
         style_index = lxlsx_format_get_xf_index(cell->data.writer.format);
@@ -4933,30 +4973,32 @@ _write_cell(lxlsx_worksheet *self, lxlsx_cell *cell, lxlsx_format *row_format)
         style_index = lxlsx_format_get_xf_index(self->col_formats[col_num]);
     }
 
-    /* Unrolled optimization for most commonly written cell types. */
+    /* Unrolled optimization for most commonly written cell types: these
+     * build their own cell reference from row/col with the hand-rolled
+     * formatters in both modes, so the snprintf-backed range conversion
+     * below is only needed for the cold cell types. */
     if (cell->type == NUMBER_CELL) {
-        _write_number_cell(self, range, style_index, cell);
+        _write_number_cell(self, style_index, cell);
         return;
     }
 
     if (cell->type == STRING_CELL) {
-        _write_string_cell(self, range, style_index, cell);
+        _write_string_cell(self, style_index, cell);
         return;
     }
 
     if (cell->type == INLINE_STRING_CELL) {
-        _write_inline_string_cell(self, range, style_index, cell);
+        _write_inline_string_cell(self, style_index, cell);
         return;
     }
 
     /* Remaining cell types are rare in bulk writes and still use the fprintf /
      * lxlsx_xml path writing directly to self->file. In constant_memory mode,
-     * flush the stream buffer (to preserve ordering) and materialise the cell
-     * reference that the hot path skipped. */
-    if (self->optimize) {
+     * flush the stream buffer first to preserve ordering. */
+    if (self->optimize)
         _obuf_flush(self);
-        lxlsx_rowcol_to_cell(range, row_num, col_num);
-    }
+
+    lxlsx_rowcol_to_cell(range, row_num, col_num);
 
     if (cell->type == INLINE_RICH_STRING_CELL) {
         _write_inline_rich_string_cell(self, range, style_index, cell);
@@ -5110,7 +5152,7 @@ lxlsx_worksheet_write_single_row(lxlsx_worksheet *self)
         for (col = self->dim_colmin; col <= self->dim_colmax; col++) {
             if (self->array[col]) {
                 _write_cell(self, self->array[col], row->format);
-                _free_cell(self->array[col]);
+                _recycle_cell(self, self->array[col]);
                 self->array[col] = NULL;
             }
         }
@@ -8327,7 +8369,7 @@ lxlsx_worksheet_write_number(lxlsx_worksheet *self,
     if (err)
         return err;
 
-    cell = _new_number_cell(row_num, col_num, value, format);
+    cell = _new_number_cell(self, row_num, col_num, value, format);
 
     _insert_cell(self, row_num, col_num, cell);
 
@@ -8392,7 +8434,7 @@ lxlsx_worksheet_write_string(lxlsx_worksheet *self,
             return LXLSX_ERROR_SHARED_STRING_INDEX_NOT_FOUND;
 
         string_id = lxlsx_sst_element->index;
-        cell = _new_string_cell(row_num, col_num, string_id,
+        cell = _new_string_cell(self, row_num, col_num, string_id,
                                 lxlsx_sst_element->string, format);
     }
     else {
@@ -8403,7 +8445,7 @@ lxlsx_worksheet_write_string(lxlsx_worksheet *self,
         else {
             string_copy = lxlsx_strdup(string);
         }
-        cell = _new_inline_string_cell(row_num, col_num, string_copy, format);
+        cell = _new_inline_string_cell(self, row_num, col_num, string_copy, format);
     }
 
     _insert_cell(self, row_num, col_num, cell);
@@ -8462,7 +8504,7 @@ lxlsx_worksheet_write_formula_num(lxlsx_worksheet *self,
     else
         formula_copy = lxlsx_strdup(formula);
 
-    cell = _new_formula_cell(row_num, col_num, formula_copy, format);
+    cell = _new_formula_cell(self, row_num, col_num, formula_copy, format);
     cell->data.writer.value.formula->result = result;
 
     _insert_cell(self, row_num, col_num, cell);
@@ -8519,7 +8561,7 @@ lxlsx_worksheet_write_formula_str(lxlsx_worksheet *self,
     else
         formula_copy = lxlsx_strdup(formula);
 
-    cell = _new_formula_cell(row_num, col_num, formula_copy, format);
+    cell = _new_formula_cell(self, row_num, col_num, formula_copy, format);
     cell->data.writer.value.formula->result_string = lxlsx_strdup(result);
 
     _insert_cell(self, row_num, col_num, cell);
@@ -8621,7 +8663,7 @@ _store_array_formula(lxlsx_worksheet *self,
     }
 
     /* Create a new array formula cell object. */
-    cell = _new_array_formula_cell(first_row, first_col,
+    cell = _new_array_formula_cell(self, first_row, first_col,
                                    formula_copy, range, format, is_dynamic);
 
     cell->data.writer.value.formula->result = result;
@@ -8761,7 +8803,7 @@ lxlsx_worksheet_write_blank(lxlsx_worksheet *self,
     if (err)
         return err;
 
-    cell = _new_blank_cell(row_num, col_num, format);
+    cell = _new_blank_cell(self, row_num, col_num, format);
 
     _insert_cell(self, row_num, col_num, cell);
 
@@ -8796,7 +8838,7 @@ lxlsx_worksheet_write_boolean(lxlsx_worksheet *self,
     if (err)
         return err;
 
-    cell = _new_boolean_cell(row_num, col_num, value, format);
+    cell = _new_boolean_cell(self, row_num, col_num, value, format);
 
     _insert_cell(self, row_num, col_num, cell);
 
@@ -8850,7 +8892,7 @@ lxlsx_worksheet_write_datetime(lxlsx_worksheet *self,
     excel_date =
         lxlsx_datetime_to_excel_date_with_epoch(datetime, self->use_1904_epoch);
 
-    cell = _new_number_cell(row_num, col_num, excel_date, format);
+    cell = _new_number_cell(self, row_num, col_num, excel_date, format);
 
     _insert_cell(self, row_num, col_num, cell);
 
@@ -8880,7 +8922,7 @@ lxlsx_worksheet_write_unixtime(lxlsx_worksheet *self,
     excel_date =
         lxlsx_unixtime_to_excel_date_with_epoch(unixtime, self->use_1904_epoch);
 
-    cell = _new_number_cell(row_num, col_num, excel_date, format);
+    cell = _new_number_cell(self, row_num, col_num, excel_date, format);
 
     _insert_cell(self, row_num, col_num, cell);
 
@@ -9069,7 +9111,7 @@ lxlsx_worksheet_write_url_opt(lxlsx_worksheet *self,
     /* Reset default error condition. */
     err = LXLSX_ERROR_MEMORY_MALLOC_FAILED;
 
-    link = _new_hyperlink_cell(row_num, col_num, link_type, url_copy,
+    link = _new_hyperlink_cell(self, row_num, col_num, link_type, url_copy,
                                url_string, tooltip_copy);
     GOTO_LABEL_ON_MEM_ERROR(link, mem_error);
 
@@ -9226,7 +9268,7 @@ lxlsx_worksheet_write_rich_string(lxlsx_worksheet *self,
             return LXLSX_ERROR_SHARED_STRING_INDEX_NOT_FOUND;
 
         string_id = lxlsx_sst_element->index;
-        cell = _new_string_cell(row_num, col_num, string_id,
+        cell = _new_string_cell(self, row_num, col_num, string_id,
                                 lxlsx_sst_element->string, format);
     }
     else {
@@ -9238,7 +9280,7 @@ lxlsx_worksheet_write_rich_string(lxlsx_worksheet *self,
         else {
             string_copy = rich_string;
         }
-        cell = _new_inline_rich_string_cell(row_num, col_num, string_copy,
+        cell = _new_inline_rich_string_cell(self, row_num, col_num, string_copy,
                                             format);
     }
 
@@ -9292,7 +9334,7 @@ lxlsx_worksheet_write_comment_opt(lxlsx_worksheet *self,
     comment->row = row_num;
     comment->col = col_num;
 
-    cell = _new_comment_cell(row_num, col_num, comment);
+    cell = _new_comment_cell(self, row_num, col_num, comment);
     GOTO_LABEL_ON_MEM_ERROR(cell, mem_error);
 
     _insert_comment(self, row_num, col_num, cell);
@@ -10748,7 +10790,9 @@ lxlsx_worksheet_repeat_columns(lxlsx_worksheet *self, lxlsx_col_t first_col,
         first_col = tmp_col;
     }
 
-    err = _check_dimensions(self, last_col, 0, LXLSX_IGNORE, LXLSX_IGNORE);
+    /* last_col is a column: validate it against the column limit, not the
+     * row limit (columns 16384..1048575 used to be accepted). */
+    err = _check_dimensions(self, 0, last_col, LXLSX_IGNORE, LXLSX_IGNORE);
     if (err)
         return err;
 
@@ -12405,7 +12449,7 @@ lxlsx_worksheet_set_error_cell(lxlsx_worksheet *self,
     lxlsx_col_t col_num = object_props->col;
 
     lxlsx_cell *cell =
-        _new_error_cell(row_num, col_num, ref_id, object_props->format);
+        _new_error_cell(self, row_num, col_num, ref_id, object_props->format);
     _insert_cell(self, row_num, col_num, cell);
 
 }
@@ -12565,7 +12609,6 @@ static void emit_cell(lxlsx_reader_worksheet *ws, lxlsx_cell *out)
 static void reset_cell(lxlsx_reader_worksheet *ws)
 {
     ws->cell_t[0] = 0;
-    ws->cell_ref[0] = 0;
     ws->cell_style_id = 0;
     ws->cell_value_len = 0;
     if (ws->cell_value) ws->cell_value[0] = 0;
@@ -12748,10 +12791,6 @@ static void on_start(void *ud, const char *name, const char **attrs)
             const char *s_attr = lxlsx_reader_xml_attr(attrs, "s");
 
             reset_cell(ws);
-            if (lxlsx_reader_copy_attr(ws->cell_ref, sizeof(ws->cell_ref), r_attr) != 0) {
-                fail_parse(ws, LXLSX_READER_ERROR_INVALID_CELL_REF);
-                return;
-            }
             if (lxlsx_reader_copy_attr(ws->cell_t, sizeof(ws->cell_t), t_attr) != 0) {
                 fail_parse(ws, LXLSX_READER_ERROR_FILE_CORRUPTED);
                 return;

@@ -2154,6 +2154,13 @@ lxlsx_workbook_add_worksheet(lxlsx_workbook *self, const char *sheetname)
     lxlsx_worksheet_name = calloc(1, sizeof(struct lxlsx_worksheet_name));
     GOTO_LABEL_ON_MEM_ERROR(lxlsx_worksheet_name, mem_error);
 
+    /* Allocate the sheet wrapper before the worksheet is created: once the
+     * worksheet is linked into self->worksheets below there is no failure
+     * path left, so mem_error can never see (and shallow-free) a node that
+     * is already reachable from the workbook lists. */
+    sheet = calloc(1, sizeof(lxlsx_sheet));
+    GOTO_LABEL_ON_MEM_ERROR(sheet, mem_error);
+
     /* Initialize the metadata to pass to the worksheet. */
     init_data.hidden = 0;
     init_data.index = self->num_sheets;
@@ -2178,12 +2185,8 @@ lxlsx_workbook_add_worksheet(lxlsx_workbook *self, const char *sheetname)
     self->num_worksheets++;
     STAILQ_INSERT_TAIL(self->worksheets, worksheet, list_pointers);
 
-    /* Create a new sheet object. */
-    sheet = calloc(1, sizeof(lxlsx_sheet));
-    GOTO_LABEL_ON_MEM_ERROR(sheet, mem_error);
+    /* Add it to the sheet list. */
     sheet->u.worksheet = worksheet;
-
-    /* Add it to the worksheet list. */
     self->num_sheets++;
     STAILQ_INSERT_TAIL(self->sheets, sheet, list_pointers);
 
@@ -2195,10 +2198,12 @@ lxlsx_workbook_add_worksheet(lxlsx_workbook *self, const char *sheetname)
     return worksheet;
 
 mem_error:
+    /* Only reachable before the worksheet exists: lxlsx_worksheet_new frees
+     * its own partial state (without taking init_data ownership) on failure. */
     free((void *) init_data.name);
     free((void *) init_data.quoted_name);
     free(lxlsx_worksheet_name);
-    free(worksheet);
+    free(sheet);
     return NULL;
 }
 
@@ -2245,6 +2250,13 @@ lxlsx_workbook_add_chartsheet(lxlsx_workbook *self, const char *sheetname)
     lxlsx_chartsheet_name = calloc(1, sizeof(struct lxlsx_chartsheet_name));
     GOTO_LABEL_ON_MEM_ERROR(lxlsx_chartsheet_name, mem_error);
 
+    /* Allocate the sheet wrapper before the chartsheet is created: once the
+     * chartsheet is linked into self->chartsheets below there is no failure
+     * path left, so mem_error can never see (and shallow-free) a node that
+     * is already reachable from the workbook lists. */
+    sheet = calloc(1, sizeof(lxlsx_sheet));
+    GOTO_LABEL_ON_MEM_ERROR(sheet, mem_error);
+
     /* Initialize the metadata to pass to the chartsheet. */
     init_data.hidden = 0;
     init_data.index = self->num_sheets;
@@ -2262,13 +2274,9 @@ lxlsx_workbook_add_chartsheet(lxlsx_workbook *self, const char *sheetname)
     self->num_chartsheets++;
     STAILQ_INSERT_TAIL(self->chartsheets, chartsheet, list_pointers);
 
-    /* Create a new sheet object. */
-    sheet = calloc(1, sizeof(lxlsx_sheet));
-    GOTO_LABEL_ON_MEM_ERROR(sheet, mem_error);
+    /* Add it to the sheet list. */
     sheet->is_chartsheet = LXLSX_TRUE;
     sheet->u.chartsheet = chartsheet;
-
-    /* Add it to the chartsheet list. */
     self->num_sheets++;
     STAILQ_INSERT_TAIL(self->sheets, sheet, list_pointers);
 
@@ -2280,10 +2288,13 @@ lxlsx_workbook_add_chartsheet(lxlsx_workbook *self, const char *sheetname)
     return chartsheet;
 
 mem_error:
+    /* Only reachable before the chartsheet exists: lxlsx_chartsheet_new
+     * frees its own partial state (without taking init_data ownership) on
+     * failure. */
     free((void *) init_data.name);
     free((void *) init_data.quoted_name);
     free(lxlsx_chartsheet_name);
-    free(chartsheet);
+    free(sheet);
     return NULL;
 }
 

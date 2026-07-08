@@ -821,6 +821,11 @@ PHP_METHOD(vtiful_xls, constMemory)
 
     GET_CONFIG_PATH(dir_path, vtiful_xls_ce, PROP_OBJ(return_value));
 
+    if(directory_exists(ZSTR_VAL(Z_STR_P(dir_path))) == XLSWRITER_FALSE) {
+        zend_throw_exception(vtiful_exception_ce, "Configure 'path' directory does not exist", 121);
+        return;
+    }
+
     xls_object *obj = Z_XLS_P(getThis());
 
     if(obj->write_ptr.workbook == NULL) {
@@ -959,6 +964,10 @@ PHP_METHOD(vtiful_xls, data)
 
     WORKBOOK_NOT_INITIALIZED(obj);
 
+    // With no per-cell number format the lookup is loop-invariant and free of
+    // side effects, so resolve it once instead of per cell.
+    lxlsx_format *cell_format = object_format(obj, NULL, obj->lxlsx_format_ptr.format);
+
     ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(data), data_r_value)
         if (Z_TYPE_P(data_r_value) == IS_REFERENCE) {
             data_r_value = Z_REFVAL_P(data_r_value);
@@ -981,7 +990,7 @@ PHP_METHOD(vtiful_xls, data)
                 column_index = index;
             }
             type_writer(data, SHEET_CURRENT_LINE(obj), column_index, &obj->write_ptr, NULL,
-                        object_format(obj, NULL, obj->lxlsx_format_ptr.format));
+                        cell_format);
 
             // next number index
             ++column_index;

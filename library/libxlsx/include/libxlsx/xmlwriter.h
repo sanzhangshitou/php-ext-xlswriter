@@ -184,6 +184,8 @@ void lxlsx_xml_data_element(FILE *xmlfile,
 
 void lxlsx_xml_rich_si_element(FILE *xmlfile, const char *string);
 
+void lxlsx_xml_write_t_element(FILE *xmlfile, const char *string);
+
 uint8_t lxlsx_has_control_characters(const char *string);
 char *lxlsx_escape_control_characters(const char *string);
 char *lxlsx_escape_url_characters(const char *string, uint8_t escape_hash);

@@ -281,16 +281,25 @@ const char *lxlsx_reader_xml_attr(const char **attrs, const char *name)
 
 int lxlsx_reader_xml_name_eq(const char *xml_name, const char *want)
 {
+    const char *n, *w;
     size_t xn_len, w_len;
     const char *colon;
+
     if (!xml_name || !want) return 0;
+
+    /* Fast path: exact match, the overwhelmingly common case. One fused walk
+     * replaces the two unconditional strlen() passes this function used to
+     * make on every element/attribute probe (~10 probes per cell). */
+    n = xml_name;
+    w = want;
+    while (*n && *n == *w) { n++; w++; }
+    if (*n == '\0' && *w == '\0') return 1;
+
+    /* Allow prefix:want (namespaced documents only). */
     xn_len = strlen(xml_name);
     w_len  = strlen(want);
+    if (xn_len <= w_len) return 0;
 
-    if (xn_len == w_len) return strcmp(xml_name, want) == 0;
-    if (xn_len < w_len)  return 0;
-
-    /* Allow prefix:want */
     colon = xml_name + (xn_len - w_len) - 1;
     if (*colon != ':') return 0;
     return strcmp(colon + 1, want) == 0;

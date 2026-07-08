@@ -267,7 +267,6 @@ struct lxlsx_reader_worksheet {
 
     /* Cell being assembled */
     char          cell_t[16];
-    char          cell_ref[32];
     uint32_t      cell_style_id;
     size_t        cell_row;
     size_t        cell_col;
